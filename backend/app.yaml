@@ -1,0 +1,19 @@
+# Databricks Apps runtime config. Deploy from the backend/ directory:
+#   databricks apps deploy ask-my-cohort --source-code-path .
+#
+# DATABRICKS_HOST is injected automatically by Databricks Apps — do not set it here.
+#
+# User authorization (required for per-role row filters/masks to work) is NOT
+# configured in this file. Enable it once, either via the CLI:
+#   databricks apps create-update ask-my-cohort --json \
+#     '{ "update_mask": "user_api_scopes", "app": { "user_api_scopes": ["sql", "dashboards.genie"] } }'
+# or by declaring `user_api_scopes: ["sql", "dashboards.genie"]` on the app
+# resource in a databricks.yml bundle, if this project moves to Asset Bundles.
+
+command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+env:
+  - name: DATABRICKS_SQL_WAREHOUSE_ID
+    value: "1d906f3feb154f7c"
+  - name: DATABRICKS_GENIE_SPACE_ID
+    value: "01f1a5dfa0de13dc90862e83ab5367ee"
