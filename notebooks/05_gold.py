@@ -11,8 +11,10 @@
 # MAGIC | `campus.gold.session_forecasts` | `silver.model_b_session_forecasts` | Promoted as-is from model B staging |
 # MAGIC | `campus.gold.attendance_buffers` | `bronze.attendance_synth` | Pure arithmetic — no model |
 # MAGIC
-# MAGIC Also populates `campus.ops.role_map` so governance row-filters work
-# MAGIC on first run.
+# MAGIC Also upserts synthetic student/advisor/dean/admin rows into
+# MAGIC `campus.ops.role_map` — by INSERT-only MERGE keyed on `user_email`, so
+# MAGIC the four real seeded accounts (advisor/dean/student/admin logins used
+# MAGIC for the live demo) are never touched or overwritten.
 # MAGIC
 # MAGIC **Owner:** Aditya  |  **Track A — Ask My Cohort (BMSCE Hackathon 2026)**
 
@@ -25,7 +27,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 from pyspark.sql import functions as F
-from pyspark.sql.types import LongType, DoubleType, IntegerType, StringType
+from pyspark.sql.types import DoubleType, StringType
 
 # ── Risk band thresholds ───────────────────────────────────────────────────
 RISK_HIGH_THRESHOLD   = 0.60   # risk_score >= this → "high"
@@ -224,6 +226,19 @@ enroll = risk_pd[["student_id", "code_module", "code_presentation"]].drop_duplic
 # Assign advisor IDs — deterministic by module-presentation, ~30 per advisor
 enroll = assign_advisor_ids(enroll)
 
+# The real demo advisor (ojashkgupta@gmail.com) is seeded in campus.ops.role_map
+# with advisor_id 'ADV001'. Remap the very first generated batch to that literal
+# ID so the real advisor login has an actual cohort of students on stage, instead
+# of a synthetic ID ('adv_<module>_<presentation>_1') that ADV001 would never match.
+_first_group = (
+    enroll[["code_module", "code_presentation"]]
+    .drop_duplicates()
+    .sort_values(["code_module", "code_presentation"])
+    .iloc[0]
+)
+_demo_advisor_id = f"adv_{_first_group['code_module']}_{_first_group['code_presentation']}_1"
+enroll["advisor_id"] = enroll["advisor_id"].replace(_demo_advisor_id, "ADV001")
+
 # Add display name and department
 enroll["student_name"] = enroll["student_id"].apply(student_display_name)
 enroll["department"]   = enroll["code_module"].apply(get_department)
@@ -268,9 +283,15 @@ risk_signals_pd = risk_gold[[
 ]].copy()
 
 # ── Write to gold ─────────────────────────────────────────────────────────
+# student_id stays STRING (not LongType): campus.ops.role_map was seeded before
+# this pipeline ran with student_id values like 'S100234', and the governance
+# row-filter function campus.ops.rf_risk declares its student_id parameter as
+# STRING to match. Casting this column to a numeric type would break the
+# ALTER TABLE ... SET ROW FILTER attachment (type mismatch) and make the seeded
+# demo student account unmatchable.
 risk_spark = (
     spark.createDataFrame(risk_signals_pd)
-    .withColumn("student_id", F.col("student_id").cast(LongType()))
+    .withColumn("student_id", F.col("student_id").cast(StringType()))
     .withColumn("risk_score", F.col("risk_score").cast(DoubleType()))
 )
 
@@ -405,7 +426,8 @@ attendance_buffers_pd = buffers[[
 
 (
     spark.createDataFrame(attendance_buffers_pd)
-    .withColumn("student_id", F.col("student_id").cast(LongType()))
+    # student_id stays STRING — same reason as risk_signals above.
+    .withColumn("student_id", F.col("student_id").cast(StringType()))
     .write
     .mode("overwrite")
     .option("overwriteSchema", "true")
@@ -480,19 +502,36 @@ role_map_pd = pd.concat(
     ignore_index=True,
 )
 
-# student_id must be Long to match the type in gold tables for filter joins
-(
+# INSERT-ONLY MERGE, never overwrite: campus.ops.role_map already exists and is
+# seeded with the four real accounts used for the live demo (advisor, dean,
+# student, admin). A plain overwrite here would destroy those rows and replace
+# them with synthetic @campus.edu addresses that match nobody's real login —
+# every row filter would then return zero rows for every real teammate.
+# student_id stays STRING to match the pre-existing column and gold tables above.
+role_map_spark = (
     spark.createDataFrame(role_map_pd)
-    .withColumn("student_id",
-                F.col("student_id").cast(LongType()))
-    .write
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable("campus.ops.role_map")
+    .withColumn("student_id", F.col("student_id").cast(StringType()))
 )
+role_map_spark.createOrReplaceTempView("role_map_generated")
 
-print(f"✓ Written campus.ops.role_map  ({len(role_map_pd):,} rows)")
-print(role_map_pd["role"].value_counts().to_string())
+before_count = spark.table("campus.ops.role_map").count()
+
+spark.sql("""
+    MERGE INTO campus.ops.role_map AS target
+    USING role_map_generated AS source
+    ON lower(target.user_email) = lower(source.user_email)
+    WHEN NOT MATCHED THEN INSERT *
+""")
+
+after_count = spark.table("campus.ops.role_map").count()
+
+print(f"✓ Merged campus.ops.role_map")
+print(f"  Rows before  : {before_count:,}")
+print(f"  Rows after   : {after_count:,}")
+print(f"  Rows inserted: {after_count - before_count:,}  "
+      f"(existing rows, including the 4 real demo accounts, were left untouched)")
+print(spark.sql("SELECT role, count(*) AS n FROM campus.ops.role_map GROUP BY role")
+      .toPandas().to_string(index=False))
 
 # COMMAND ----------
 # MAGIC %md
@@ -523,7 +562,7 @@ col_comments_risk = {
     "department":      "Academic department derived from the module code. Answers: which department has the most at-risk students? Used by deans to see department-level aggregates.",
     "risk_score":      "Probability between 0.0 and 1.0 that this student will fail or withdraw before the end of the module. Computed by a logistic regression model trained on six-week engagement features. Higher = more at-risk. Use this for sorting and thresholding: e.g. students with risk_score > 0.6.",
     "risk_band":       "Human-readable risk tier derived from risk_score. Values: high (score >= 0.60), medium (score >= 0.35), low (score < 0.35). Use this for filtering: e.g. show all high-risk students. Answers: which students are in the danger zone?",
-    "top_factor_1":    "The single biggest driver of this student\\'s risk score, expressed in plain English for an advisor. Examples: 'low VLE engagement in week 4', 'pattern of late assessment submissions'. Positive means it is increasing risk; the advisor should address this directly.",
+    "top_factor_1":    "The single biggest driver of this student\\'s risk score, expressed in plain English for an advisor. Examples: \\'low VLE engagement in week 4\\', \\'pattern of late assessment submissions\\'. Positive means it is increasing risk; the advisor should address this directly.",
     "top_factor_2":    "The second most influential factor in this student\\'s risk score. Same format as top_factor_1. Together with top_factor_1 and top_factor_3, gives the advisor a complete picture of why the risk flag was raised.",
     "top_factor_3":    "The third most influential factor in this student\\'s risk score. When all three factors point to low engagement, the pattern is consistent. When they are mixed, one factor may be an outlier.",
     "scored_at":       "UTC timestamp when the risk model last scored this student. Answers: how recent is this data? All students in a run share the same scored_at value.",

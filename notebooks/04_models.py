@@ -38,7 +38,10 @@ ROLLING_K   = 3   # rolling window for Model B
 
 # MLflow experiment: per-user, in the workspace.
 _current_user = spark.sql("SELECT current_user() AS u").collect()[0]["u"]
-MLFLOW_EXPERIMENT = f"/Users/{_current_user}/ask-my-cohort"
+# Nested inside the ask-my-cohort workspace folder, not equal to it — MLflow
+# experiments and workspace folders share one namespace, so a path that matches
+# an existing directory name fails with "node ... already exists" on creation.
+MLFLOW_EXPERIMENT = f"/Users/{_current_user}/ask-my-cohort/mlflow-ask-my-cohort"
 mlflow.set_experiment(MLFLOW_EXPERIMENT)
 
 print(f"MLflow experiment : {MLFLOW_EXPERIMENT}")
