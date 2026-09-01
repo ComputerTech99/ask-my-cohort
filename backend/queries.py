@@ -208,12 +208,49 @@ LIMIT 12
 """
 
 
+BY_DEPARTMENT_SQL = f"""
+SELECT department AS name,
+       COUNT(*) AS total,
+       SUM(CASE WHEN risk_band = '{AT_RISK_BAND}' THEN 1 ELSE 0 END) AS at_risk
+FROM campus.gold.risk_signals
+GROUP BY department
+ORDER BY at_risk DESC
+LIMIT 12
+"""
+
+BY_MODULE_SQL = f"""
+SELECT code_module AS name,
+       COUNT(*) AS total,
+       SUM(CASE WHEN risk_band = '{AT_RISK_BAND}' THEN 1 ELSE 0 END) AS at_risk
+FROM campus.gold.risk_signals
+GROUP BY code_module
+ORDER BY at_risk DESC
+LIMIT 12
+"""
+
+
+def _breakdown(rows: list[dict]) -> list[dict]:
+    out = []
+    for r in rows:
+        total = to_int(r["total"]) or 0
+        at_risk = to_int(r["at_risk"]) or 0
+        out.append({
+            "name": r["name"],
+            "total": total,
+            "atRisk": at_risk,
+            "pct": (100 * at_risk / total) if total else 0.0,
+        })
+    return out
+
+
 def fetch_overview(client: WorkspaceClient, warehouse_id: str) -> dict:
     totals = run_sql(client, warehouse_id, OVERVIEW_TOTALS_SQL)
     risk_bands = run_sql(client, warehouse_id, RISK_BANDS_SQL)
     buffer_bands = run_sql(client, warehouse_id, BUFFER_BANDS_SQL)
     next_hc = run_sql(client, warehouse_id, NEXT_HEADCOUNT_SQL)
     rows = run_sql(client, warehouse_id, OVERVIEW_ROWS_SQL)
+    by_department = _breakdown(run_sql(client, warehouse_id, BY_DEPARTMENT_SQL))
+    by_module = _breakdown(run_sql(client, warehouse_id, BY_MODULE_SQL))
 
     total = (to_int(totals[0]["total"]) if totals else 0) or 0
     at_risk = (to_int(totals[0]["at_risk"]) if totals else 0) or 0
@@ -246,6 +283,8 @@ def fetch_overview(client: WorkspaceClient, warehouse_id: str) -> dict:
         "departments": departments,
         "riskBands": [{"band": b["band"], "n": to_int(b["n"])} for b in risk_bands],
         "bufferBands": [{"band": b["band"], "n": to_int(b["n"])} for b in buffer_bands],
+        "byDepartment": by_department,
+        "byModule": by_module,
         "nextHeadcount": headcount,
         "nextSessionDate": next_session_date,
         "rows": sample,

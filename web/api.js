@@ -155,18 +155,21 @@ export async function fetchOverview() {
 
 // ---------- Genie ----------
 
-export async function askGenie(question) {
+// Returns { answer, conversation_id }. Pass the conversation_id back on the next
+// question to keep one Genie conversation going, so follow-ups have context.
+export async function askGenie(question, conversationId = null) {
   if (!USE_LIVE_API) {
-    return withLatency(
-      `Demo mode — not connected to a Genie space, so "${question}" can't be answered live. ` +
-      "With the backend wired up this returns a governed answer from the Genie Conversations API.",
-      420
-    );
+    return withLatency({
+      answer:
+        `Demo mode — not connected to a Genie space, so "${question}" can't be answered live. ` +
+        "With the backend wired up this returns a governed answer from the Genie Conversations API.",
+      conversation_id: conversationId || "demo-conversation",
+    }, 420);
   }
   const res = await fetch(`${API_BASE}/genie/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, conversation_id: conversationId }),
     credentials: "include",
   });
   if (!res.ok) {
@@ -177,7 +180,7 @@ export async function askGenie(question) {
     } catch (_) { /* non-JSON error body */ }
     throw new Error(detail);
   }
-  return (await res.json()).answer;
+  return res.json();
 }
 
 // Suggested questions per role, phrased against the vocabulary the Genie space was

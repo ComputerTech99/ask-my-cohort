@@ -138,12 +138,15 @@ async def genie_ask(request: Request):
     question = (body or {}).get("question", "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="question is required")
+    # Present on every message after the first, so Genie treats the exchange as one
+    # conversation and follow-up questions resolve against earlier context.
+    conversation_id = (body or {}).get("conversation_id") or None
     token = user_token(request)
     try:
-        answer = ask_genie(DATABRICKS_HOST, token, GENIE_SPACE_ID, question)
+        return ask_genie(DATABRICKS_HOST, token, GENIE_SPACE_ID, question, conversation_id)
     except Exception as e:
+        logger.exception("genie ask failed")
         raise HTTPException(status_code=502, detail=f"Genie request failed: {e}")
-    return {"answer": answer}
 
 
 # Mounted last: everything not matched by an /api/* route above falls through to
