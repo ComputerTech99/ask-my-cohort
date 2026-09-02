@@ -300,6 +300,38 @@ nav { display: flex; gap: 2px; }
 }
 .hero-aside { display: grid; justify-items: center; gap: 20px; }
 
+/* ---------- perspective picker (demo) ---------- */
+
+.picker { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+.pick-card {
+  display: grid; gap: 8px; text-align: left; padding: 26px;
+  border-radius: var(--r); border: 1px solid var(--line);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--band) 9%, var(--surface)), var(--surface) 72%);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.22s var(--ease), box-shadow 0.22s var(--ease), border-color 0.22s var(--ease);
+}
+.pick-card:hover, .pick-card:focus-visible {
+  transform: translateY(-3px); box-shadow: var(--shadow);
+  border-color: color-mix(in srgb, var(--band) 45%, var(--line)); outline: none;
+}
+.pick-role {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--band);
+}
+.pick-who { font-family: var(--serif); font-size: 27px; line-height: 1.1; letter-spacing: -0.02em; }
+.pick-sees { font-size: 14.5px; color: var(--ink-2); line-height: 1.5; }
+.pick-cannot { font-size: 13px; color: var(--ink-3); line-height: 1.45; }
+.pick-go {
+  margin-top: 8px; font-size: 13.5px; color: var(--band); font-weight: 500;
+}
+
+.source-chip.demo { cursor: pointer; }
+.source-chip .switch-hint {
+  border-left: 1px solid var(--cost-line); padding-left: 8px; margin-left: 2px;
+  text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.75;
+}
+.source-chip.demo:hover { border-color: var(--band-medium); }
+
 /* ---------- agent preview (landing hero) ---------- */
 
 .agent-preview {
@@ -787,7 +819,7 @@ footer {
   .wrap { padding: 0 20px; }
   .chapter > .wrap { padding-top: 52px; padding-bottom: 52px; }
   .hero > .wrap { padding-top: 56px; padding-bottom: 40px; }
-  .split, .split-even, .tiles, .buffer-figures, .hero-grid { grid-template-columns: 1fr; }
+  .split, .split-even, .tiles, .buffer-figures, .hero-grid, .picker { grid-template-columns: 1fr; }
   .hero-grid { gap: 34px; }
   .donut-wrap { max-width: 190px; }
   .agent-preview { max-width: 100%; }

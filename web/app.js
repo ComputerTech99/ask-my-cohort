@@ -1,7 +1,8 @@
 import {
-  USE_LIVE_API, ROLE_LABEL, SUGGESTIONS, GOVERNANCE,
+  USE_LIVE_API, IS_DEMO, ROLE_LABEL, SUGGESTIONS, GOVERNANCE, DEMO_ROLES,
+  getDemoRole, setDemoRole,
   fetchMe, fetchCohort, fetchStudentSelf, fetchOverview, askGenie,
-} from "./api.js?v=10";
+} from "./api.js?v=11";
 
 const root = document.getElementById("app");
 const BAND_ORDER = ["low", "medium", "high", "unavoidable"];
@@ -58,6 +59,35 @@ function toggleTheme() {
   render();
 }
 
+// ---------- demo perspective switching ----------
+
+// Choosing a perspective re-runs the whole boot, so each role loads exactly the data
+// its own role is allowed to read — the same path live mode takes after login.
+function enterAsRole(role) {
+  setDemoRole(role);
+  resetRoleState();
+  state.page = "dashboard";
+  boot();
+}
+
+function leaveDemoRole() {
+  setDemoRole(null);
+  resetRoleState();
+  state.page = "dashboard";
+  render();
+}
+
+function resetRoleState() {
+  Object.assign(state, {
+    me: null, meError: null, loading: true,
+    cohort: null, cohortError: null,
+    self: null, selfError: null,
+    overview: null, overviewError: null,
+    sel: 0, cohortExpanded: false, loggedActions: {},
+    messages: [], conversationId: null, asking: false,
+  });
+}
+
 // ---------- boot: identity first, then only what this role can read ----------
 
 async function boot() {
@@ -76,7 +106,9 @@ async function boot() {
   state.loading = false;
   render();
 
-  const role = me.role;
+  // null in demo mode until a perspective is chosen; in live mode it means the account
+  // has no role_map row, which renderUnmapped() explains.
+  const role = me?.role;
   if (!role) return;
 
   // Each panel loads and fails independently — one endpoint erroring must not blank
@@ -232,7 +264,10 @@ function renderHeader() {
     <span class="spacer"></span>
     ${/* Live is the expected state and needs no badge. Demo mode always announces
           itself — mock data must never be mistakable for the real thing. */ ""}
-    ${USE_LIVE_API ? "" : `<span class="source-chip demo"><span class="dot"></span>Demo data</span>`}
+    ${USE_LIVE_API ? "" : `<button class="source-chip demo" data-nav="pick" title="Switch perspective">
+        <span class="dot"></span>Demo${me && me.role ? ` · viewing as ${esc(ROLE_LABEL[me.role] || me.role)}` : ""}
+        <span class="switch-hint">switch</span>
+      </button>`}
     <button class="icon-btn" data-theme-toggle title="Switch to ${activeTheme() === "dark" ? "light" : "dark"} mode"
             aria-label="Switch to ${activeTheme() === "dark" ? "light" : "dark"} mode">${activeTheme() === "dark" ? "☀" : "☾"}</button>
     ${identity}
@@ -314,6 +349,63 @@ function renderChat() {
       </div>
     </div>
   </div>`;
+}
+
+// ---------- perspective chooser (demo only) ----------
+
+const DEMO_ROLE_COPY = {
+  advisor: {
+    tone: "low",
+    who: "Dr. Meera Rao",
+    sees: "Their own 30 students, by name, with contributing signals and attendance buffer.",
+    cannot: "Cannot see any other advisor's students.",
+  },
+  dean: {
+    tone: "medium",
+    who: "Dean, School of Engineering",
+    sees: "Every one of the 32,593 enrolments — but every student_name comes back REDACTED.",
+    cannot: "Cannot identify an individual student.",
+  },
+  student: {
+    tone: "info",
+    who: "Sneha Reddy",
+    sees: "Their own attendance buffer and what missing the next session costs.",
+    cannot: "Never shown a risk score — by design, not by omission.",
+  },
+  admin: {
+    tone: "unavoidable",
+    who: "Catalog admin",
+    sees: "Every row with names intact, plus the governance console showing the live policy SQL.",
+    cannot: "Sees everything — which is exactly why the role exists in role_map.",
+  },
+};
+
+function renderPicker() {
+  return hero({
+    eyebrow: "Public demo",
+    headline: "Whose view do you want to see?",
+    sub: "In the real deployment you don't get this choice — Unity Catalog resolves your role from your login and returns only what it permits. This demo lets you stand in each role in turn, so you can watch the same data change shape.",
+  }) + chapter({
+    body: `
+      <div class="picker">
+        ${DEMO_ROLES.map((r) => {
+          const c = DEMO_ROLE_COPY[r];
+          return `
+          <button class="pick-card" data-pick-role="${r}" data-band="${c.tone}">
+            <span class="pick-role">${esc(ROLE_LABEL[r])}</span>
+            <span class="pick-who">${esc(c.who)}</span>
+            <span class="pick-sees">${esc(c.sees)}</span>
+            <span class="pick-cannot">${esc(c.cannot)}</span>
+            <span class="pick-go">Enter as ${esc(ROLE_LABEL[r].toLowerCase())} →</span>
+          </button>`;
+        }).join("")}
+      </div>
+      <p class="provenance">
+        <span class="mono">campus.ops.rf_risk</span>
+        <span class="mono">campus.ops.mask_name</span>
+        In the live system these two functions produce the differences above. Here they are reproduced with fixed sample data.
+      </p>`,
+  });
 }
 
 // ---------- landing ----------
@@ -930,6 +1022,11 @@ function renderBody() {
   if (state.loading) return chapter({ body: `<div class="notice">Resolving your identity…</div>` });
   if (state.meError) return chapter({ body: errorBox(`Couldn't resolve who you are: ${state.meError}`) });
   if (state.page === "how") return renderHow();
+
+  // In the demo nobody has an identity until they choose one. Live mode never reaches
+  // this — there, role comes from role_map and cannot be picked.
+  if (IS_DEMO && !state.me) return renderPicker();
+
   if (state.page === "chat") return renderChat();
 
   const role = state.me?.role;
@@ -1025,8 +1122,15 @@ async function submitAsk(question) {
 root.addEventListener("click", (e) => {
   if (e.target.closest("[data-theme-toggle]")) return toggleTheme();
 
+  const pickRoleEl = e.target.closest("[data-pick-role]");
+  if (pickRoleEl) return enterAsRole(pickRoleEl.dataset.pickRole);
+
   const navEl = e.target.closest("[data-nav]");
-  if (navEl) return setState({ page: navEl.dataset.nav });
+  if (navEl) {
+    // "pick" isn't a page — it drops the current demo identity and returns to the chooser.
+    if (navEl.dataset.nav === "pick") return leaveDemoRole();
+    return setState({ page: navEl.dataset.nav });
+  }
 
   const askEl = e.target.closest("[data-ask]");
   if (askEl) return submitAsk(askEl.dataset.ask);
