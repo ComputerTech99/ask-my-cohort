@@ -2,7 +2,7 @@ import {
   USE_LIVE_API, IS_DEMO, ROLE_LABEL, SUGGESTIONS, GOVERNANCE, DEMO_ROLES,
   getDemoRole, setDemoRole,
   fetchMe, fetchCohort, fetchStudentSelf, fetchOverview, askGenie,
-} from "./api.js?v=11";
+} from "./api.js?v=12";
 
 const root = document.getElementById("app");
 const BAND_ORDER = ["low", "medium", "high", "unavoidable"];
@@ -74,7 +74,10 @@ function leaveDemoRole() {
   setDemoRole(null);
   resetRoleState();
   state.page = "dashboard";
-  render();
+  // Must re-boot, not just render: resetRoleState sets loading = true, and only boot()
+  // ever clears it. Calling render() here left the page stuck on "Resolving your
+  // identity…" with no error, because nothing was resolving anything.
+  boot();
 }
 
 function resetRoleState() {
@@ -1019,13 +1022,15 @@ function renderBody() {
   // so the front door is never a spinner.
   if (state.page === "landing") return renderLanding();
 
-  if (state.loading) return chapter({ body: `<div class="notice">Resolving your identity…</div>` });
-  if (state.meError) return chapter({ body: errorBox(`Couldn't resolve who you are: ${state.meError}`) });
   if (state.page === "how") return renderHow();
 
-  // In the demo nobody has an identity until they choose one. Live mode never reaches
-  // this — there, role comes from role_map and cannot be picked.
-  if (IS_DEMO && !state.me) return renderPicker();
+  // In the demo nobody has an identity until they choose one, and there is nothing to
+  // resolve until they do — so this is checked before any loading state. Live mode never
+  // reaches it: there, role comes from role_map and cannot be picked in the browser.
+  if (IS_DEMO && !getDemoRole()) return renderPicker();
+
+  if (state.loading) return chapter({ body: `<div class="notice">Resolving your identity…</div>` });
+  if (state.meError) return chapter({ body: errorBox(`Couldn't resolve who you are: ${state.meError}`) });
 
   if (state.page === "chat") return renderChat();
 
